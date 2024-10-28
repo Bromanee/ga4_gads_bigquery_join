@@ -1,0 +1,122 @@
+WITH 
+set_date AS (
+  SELECT 
+    DATE "2024-10-26" AS start_date, --Y/M/D
+    DATE "2024-10-26" AS end_date 
+),
+ids_metrics AS (
+  SELECT
+    customer_id,
+    campaign_id,
+    SUM(metrics_cost_micros/1000000) AS cost,
+    SUM(metrics_impressions) AS impressions,
+    SUM(metrics_clicks) AS clicks,
+    SUM(metrics_conversions) AS conversions,
+    segments_date
+  FROM `bq-gads-datatransfer.gads_eu_multiregion.p_ads_CampaignBasicStats_6242544351` 
+  WHERE
+    DATE(segments_date) BETWEEN 
+    (SELECT start_date FROM set_date) AND
+    (SELECT end_date FROM set_date)
+  GROUP BY customer_id, campaign_id, segments_date
+),
+customer_data AS (
+  SELECT
+    customer_id,
+    customer_currency_code AS currency
+  FROM `bq-gads-datatransfer.gads_eu_multiregion.p_ads_Customer_6242544351` 
+),
+campaign_data AS (
+  SELECT 
+    customer_id,
+    campaign_id,
+    campaign_name
+  FROM `bq-gads-datatransfer.gads_eu_multiregion.p_ads_Campaign_6242544351` 
+),
+gclid_data AS (
+  SELECT 
+    campaign_id AS campaign_id,
+    click_view_gclid AS gclid
+  FROM `bq-gads-datatransfer.gads_eu_multiregion.p_ads_ClickStats_6242544351` 
+  WHERE DATE(segments_date) BETWEEN 
+    (SELECT start_date FROM set_date) AND
+    (SELECT end_date FROM set_date) 
+),
+join_customer AS (
+  SELECT *,
+    customer_data.currency AS currency_customer
+  FROM campaign_data
+  LEFT JOIN customer_data ON campaign_data.customer_id = customer_data.customer_id
+),
+join_data AS (
+  SELECT
+    ids_metrics.segments_date,
+    ids_metrics.customer_id,
+    ids_metrics.campaign_id,
+    gclid_data.gclid,
+    join_customer.campaign_name,
+    ids_metrics.clicks,
+    ids_metrics.impressions,
+    ids_metrics.conversions,
+    ids_metrics.cost,
+    join_customer.currency_customer AS currency
+  FROM ids_metrics
+  LEFT JOIN join_customer ON ids_metrics.campaign_id = join_customer.campaign_id
+  LEFT JOIN gclid_data ON ids_metrics.campaign_id = gclid_data.campaign_id
+  GROUP BY ALL
+),
+ga4_data AS (
+  SELECT
+    (SELECT value.string_value FROM UNNEST(event_params) WHERE key="event_gclid") AS gclid,
+    ARRAY_AGG(DISTINCT user_pseudo_id IGNORE NULLS) AS user_pseudo_ids,
+    COUNT(DISTINCT user_pseudo_id) AS users,
+    COUNT(DISTINCT (SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'ga_session_id')) AS sessions,
+    SUM(ecommerce.purchase_revenue) AS revenue
+  FROM
+    `bq-ga4-sandbox.analytics_266899329.events_*` -- GA4 dataset
+  WHERE
+    _TABLE_SUFFIX BETWEEN FORMAT_DATE('%Y%m%d', (SELECT start_date FROM set_date))
+                      AND FORMAT_DATE('%Y%m%d', (SELECT end_date FROM set_date))
+    AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key="event_gclid") IS NOT NULL
+  GROUP BY
+    gclid
+)
+
+-- Final query with GA4 join 
+SELECT
+  jd.segments_date,
+  jd.customer_id,
+  jd.campaign_id,
+  jd.campaign_name,
+  jd.gclid,
+  ROUND(SUM(jd.cost), 2) AS cost_campaign,
+  SUM(jd.clicks) AS clicks_campaign,
+  IF(SUM(jd.clicks) = 0, 0, ROUND(SUM(jd.cost)/SUM(jd.clicks), 2)) AS cpc_campaign,
+  SUM(jd.impressions) AS impressions_campaign,
+  IF(SUM(jd.impressions) = 0, 0, ROUND(((SUM(jd.cost)/SUM(jd.impressions))*1000), 2)) AS cpm_campaign,
+  SUM(jd.conversions) AS conversions_campaign,
+  IF(SUM(jd.conversions) = 0, 0, ROUND((SUM(jd.cost)/SUM(jd.conversions)), 2)) AS cpa_campaign,
+  jd.currency,
+  -- GA4 metrics
+  ga4.user_pseudo_ids AS ga4_user_pseudo_ids,
+  ga4.users AS ga4_users,
+  ga4.sessions AS ga4_sessions,
+  ga4.revenue AS ga4_revenue,
+  IF(ga4.sessions > 0, ROUND(ga4.revenue / ga4.sessions, 2), 0) AS ga4_revenue_per_session
+FROM 
+  join_data jd
+LEFT JOIN
+  ga4_data ga4 ON jd.gclid = ga4.gclid 
+GROUP BY
+  jd.segments_date,
+  jd.customer_id,
+  jd.campaign_id,
+  jd.campaign_name,
+  jd.gclid,
+  jd.currency,
+  ga4.user_pseudo_ids,
+  ga4.users,
+  ga4.sessions,
+  ga4.revenue
+ORDER BY
+  jd.campaign_name, jd.segments_date
