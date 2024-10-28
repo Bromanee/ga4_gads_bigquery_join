@@ -13,7 +13,7 @@ ids_metrics AS (
     SUM(metrics_clicks) AS clicks,
     SUM(metrics_conversions) AS conversions,
     segments_date
-  FROM `bq-gads-datatransfer.gads_eu_multiregion.p_ads_CampaignBasicStats_6242544351` 
+  FROM `bq-gads-datatransfer.gads_eu_multiregion.p_ads_CampaignBasicStats_XXXXXXX` 
   WHERE
     DATE(segments_date) BETWEEN 
     (SELECT start_date FROM set_date) AND
@@ -24,20 +24,20 @@ customer_data AS (
   SELECT
     customer_id,
     customer_currency_code AS currency
-  FROM `bq-gads-datatransfer.gads_eu_multiregion.p_ads_Customer_6242544351` 
+  FROM `bq-gads-datatransfer.gads_eu_multiregion.p_ads_Customer_XXXXXXX` 
 ),
 campaign_data AS (
   SELECT 
     customer_id,
     campaign_id,
     campaign_name
-  FROM `bq-gads-datatransfer.gads_eu_multiregion.p_ads_Campaign_6242544351` 
+  FROM `bq-gads-datatransfer.gads_eu_multiregion.p_ads_Campaign_XXXXXXX` 
 ),
 gclid_data AS (
   SELECT 
     campaign_id AS campaign_id,
     click_view_gclid AS gclid
-  FROM `bq-gads-datatransfer.gads_eu_multiregion.p_ads_ClickStats_6242544351` 
+  FROM `bq-gads-datatransfer.gads_eu_multiregion.p_ads_ClickStats_XXXXXXX` 
   WHERE DATE(segments_date) BETWEEN 
     (SELECT start_date FROM set_date) AND
     (SELECT end_date FROM set_date) 
@@ -73,11 +73,10 @@ ga4_data AS (
     COUNT(DISTINCT (SELECT value.int_value FROM UNNEST(event_params) WHERE key = 'ga_session_id')) AS sessions,
     SUM(ecommerce.purchase_revenue) AS revenue
   FROM
-    `bq-ga4-sandbox.analytics_266899329.events_*` -- GA4 dataset
+    `bq-ga4-sandbox.analytics_XXXXXXXX.events_*` -- GA4 dataset
   WHERE
     _TABLE_SUFFIX BETWEEN FORMAT_DATE('%Y%m%d', (SELECT start_date FROM set_date))
                       AND FORMAT_DATE('%Y%m%d', (SELECT end_date FROM set_date))
-    AND (SELECT value.string_value FROM UNNEST(event_params) WHERE key="event_gclid") IS NOT NULL
   GROUP BY
     gclid
 )
